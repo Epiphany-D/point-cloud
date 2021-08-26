@@ -1,8 +1,8 @@
 import os.path as osp
 import shutil
 import warnings
-import numpy as np
 
+import numpy as np
 import torch
 from torch.nn import Parameter
 

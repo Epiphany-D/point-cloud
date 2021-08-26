@@ -1,31 +1,29 @@
-import pandas as pd
+from typing import Optional, Callable, Union
+
 import numpy as np
+import pandas as pd
+import scanpy as sc
 import torch
 from scipy.sparse.csr import csr_matrix
-from torch_geometric.data import Data, DataLoader, Dataset
-import torch_geometric.transforms as T
-from sklearn.metrics import pairwise_distances
 from sklearn.decomposition import PCA
-from torch.nn import Sequential as Seq, Dropout, Linear as Lin, ReLU, LayerNorm as LN
-from torch_geometric.nn import GAE
-from torch_geometric.nn.pool import radius
-from torch_geometric.nn.inits import reset
-import torch.nn.functional as F
-from torch.optim.lr_scheduler import ReduceLROnPlateau
-from typing import Optional, Callable, Union
-from torch_geometric.typing import OptTensor, PairOptTensor, PairTensor, Adj
-from pandas.core.frame import DataFrame
-from torch.nn.parameter import Parameter
-from torch import Tensor
-from torch_sparse import SparseTensor, set_diag
-from torch_geometric.nn.conv import MessagePassing
-from torch_geometric.utils import remove_self_loops, add_self_loops
-from pytorchtools import EarlyStopping
-from sklearn.cluster import KMeans
-import faiss
-from torch_utils import to_numpy, to_torch
-import scanpy as sc
+from sklearn.metrics import pairwise_distances
 from sklearn.metrics.cluster import adjusted_rand_score
+from torch import Tensor
+from torch.nn import Sequential as Seq, Dropout, Linear as Lin, ReLU, LayerNorm as LN
+from torch.nn.parameter import Parameter
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torch_geometric.data import Data, DataLoader
+from torch_geometric.nn import GAE
+from torch_geometric.nn.conv import MessagePassing
+from torch_geometric.nn.inits import reset
+from torch_geometric.nn.pool import radius
+from torch_geometric.typing import OptTensor, PairOptTensor, PairTensor, Adj
+from torch_geometric.utils import remove_self_loops, add_self_loops
+from torch_sparse import SparseTensor, set_diag
+
+from pytorchtools import EarlyStopping
+# import faiss
+from torch_utils import to_numpy, to_torch
 
 EPS = 1e-15
 MAX_LOGSTD = 10
@@ -50,7 +48,7 @@ def load_data(spaFll_path, metaData_path, pca_dim):
     data_list = []
     a = np.load(f'{spaFll_path}')  # 参数
     b = pd.read_csv(f'{metaData_path}')
-    e = csr_matrix((a['data'], a['indices'], a['indptr']), dtype=int).transpose()
+    e = csr_matrix((a['data'], a['indices'], a['indptr']), dtype=int)
     e = csr_matrix.todense(e)  # feature [3639,33538]
 
     # 数据预处理
@@ -64,7 +62,8 @@ def load_data(spaFll_path, metaData_path, pca_dim):
     pca = PCA(n_components=pca_dim)  # 值 参数
     e = pca.fit_transform(e)  # expression [3639,50]
 
-    pos = b.loc[:, ['pxl_col_in_fullres', 'pxl_row_in_fullres']].values  # pos [3639,2]
+    coor = b.loc[:, ['pxl_col_in_fullres', 'pxl_row_in_fullres']].values  # pos [3639,2]
+    array = b.loc[:, ['array_row', 'array_col']].values
     RGB = b.loc[:, ['R', 'G', 'B']].values  # RGB [3639,3]
 
     layer = b['layer'].tolist()
@@ -86,7 +85,7 @@ def load_data(spaFll_path, metaData_path, pca_dim):
         elif layer[index] == 'wm':
             label.append(7)
         else:
-            delete_index.append(index)
+            label.append(0)
 
     e = np.delete(e, delete_index, axis=0)
     pos = np.delete(pos, delete_index, axis=0)
@@ -103,10 +102,9 @@ def load_data(spaFll_path, metaData_path, pca_dim):
 
     # fea = torch.cat((expression, RGB), axis=1)      # fea[3639,53]
     fea = expression
-    data = Data(pos=pos, x=fea, y=label)
+    data = Data(pos=array, x=fea, y=label)
     data.expression = expression
-    # Normal = T.NormalizeScale()
-    # data = Normal(data)
+    data.coor = coor
     data = data.to(device)
     data_list.append(data)
     print("load data")
@@ -200,8 +198,8 @@ class PointNet(torch.nn.Module):
 class PointEncoder(torch.nn.Module):
     def __init__(self, out_channels=3):
         super().__init__()
-        self.conv1 = PointNet(145 * 1.5, local_nn(50 + 2, 64), global_nn())
-        self.conv2 = PointNet(145 * 3, local_nn(50 + 2, 64), global_nn())
+        self.conv1 = PointNet(1.5, local_nn(50 + 2, 64), global_nn())
+        self.conv2 = PointNet(2.5, local_nn(50 + 2, 64), global_nn())
         # self.lin1 = MLP([64 + 64 + 64, 256])
         self.mlp = Lin(64 + 64, out_channels)
 

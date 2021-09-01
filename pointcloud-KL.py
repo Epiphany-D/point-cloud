@@ -22,8 +22,8 @@ from torch_geometric.utils import remove_self_loops, add_self_loops
 from torch_sparse import SparseTensor, set_diag
 
 from pytorchtools import EarlyStopping
+
 # import faiss
-from torch_utils import to_numpy, to_torch
 
 EPS = 1e-15
 MAX_LOGSTD = 10
@@ -66,7 +66,7 @@ def load_data(spaFll_path, metaData_path, pca_dim):
     array = b.loc[:, ['array_row', 'array_col']].values
     RGB = b.loc[:, ['R', 'G', 'B']].values  # RGB [3639,3]
 
-    layer = b['layer'].tolist()
+    layer = b['benmarklabel'].tolist()
     label = []
     delete_index = []
     for index in range(len(layer)):
@@ -88,7 +88,7 @@ def load_data(spaFll_path, metaData_path, pca_dim):
             label.append(0)
 
     e = np.delete(e, delete_index, axis=0)
-    pos = np.delete(pos, delete_index, axis=0)
+    pos = np.delete(coor, delete_index, axis=0)
     RGB = np.delete(RGB, delete_index, axis=0)
 
     expression = torch.from_numpy(e.astype(np.float32))
@@ -106,12 +106,15 @@ def load_data(spaFll_path, metaData_path, pca_dim):
     data.expression = expression
     data.coor = coor
     data = data.to(device)
+    data.pos = torch.from_numpy(np.array(data.pos))
     data_list.append(data)
     print("load data")
     return data_list
 
 
 def distance_matrix(data):  # 距离矩阵
+    # data.pos = torch.from_numpy(np.array(data.pos))
+    print(np.shape(data.pos))
     dis_matrix = pairwise_distances(data.pos.cpu())
     dis_matrix = torch.from_numpy(dis_matrix)
     return dis_matrix
@@ -212,30 +215,30 @@ class PointEncoder(torch.nn.Module):
         return out
 
 
-def label_generator_kmeans(features, num_classes=500, cuda=True, **kwargs):
-    # assert cfg.TRAIN.PSEUDO_LABELS.cluster == "kmeans"
-    # assert num_classes, "num_classes for kmeans is null"
-    #
-    # # num_classes = cfg.TRAIN.PSEUDO_LABELS.cluster_num
-    #
-    # if not cfg.TRAIN.PSEUDO_LABELS.use_outliers:
-    #     warnings.warn("there exists no outlier point by kmeans clustering")
-
-    # k-means cluster by faiss
-    cluster = faiss.Kmeans(
-        features.size(-1), num_classes, niter=300, verbose=False, gpu=cuda
-    )
-
-    cluster.train(to_numpy(features))
-
-    centers = to_torch(cluster.centroids).float()
-    _, labels = cluster.index.search(to_numpy(features), 1)
-    labels = labels.reshape(-1)
-    labels = to_torch(labels).long()
-    # k-means does not have outlier points
-    assert not (-1 in labels)
-
-    return labels, centers, num_classes
+# def label_generator_kmeans(features, num_classes=500, cuda=True, **kwargs):
+#     # assert cfg.TRAIN.PSEUDO_LABELS.cluster == "kmeans"
+#     # assert num_classes, "num_classes for kmeans is null"
+#     #
+#     # # num_classes = cfg.TRAIN.PSEUDO_LABELS.cluster_num
+#     #
+#     # if not cfg.TRAIN.PSEUDO_LABELS.use_outliers:
+#     #     warnings.warn("there exists no outlier point by kmeans clustering")
+#
+#     # k-means cluster by faiss
+#     cluster = faiss.Kmeans(
+#         features.size(-1), num_classes, niter=300, verbose=False, gpu=cuda
+#     )
+#
+#     cluster.train(to_numpy(features))
+#
+#     centers = to_torch(cluster.centroids).float()
+#     _, labels = cluster.index.search(to_numpy(features), 1)
+#     labels = labels.reshape(-1)
+#     labels = to_torch(labels).long()
+#     # k-means does not have outlier points
+#     assert not (-1 in labels)
+#
+#     return labels, centers, num_classes
 
 
 class InnerProductDecoder(torch.nn.Module):
@@ -249,7 +252,8 @@ class Decoder(torch.nn.Module):
         adj = torch.matmul(z, z.t())
         self.alpha = 0.2
         if init == "kmeans":
-            y_pred, center, _ = label_generator_kmeans(z, 8)
+            # y_pred, center, _ = label_generator_kmeans(z, 8)
+            pass
 
         elif init == "louvain":
             adata = sc.AnnData(z.cpu().detach().numpy())
@@ -304,8 +308,8 @@ class GAE(torch.nn.Module):
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-a_path = '/home/19yynenu/singlecell/pointcloud/data/151673_humanBrain_scran_spaFull.npz'
-b_path = '/home/19yynenu/singlecell/pointcloud/data/151673_humanBrain_metaData.csv'
+a_path = 'data1/151507_humanBrain_expression_spa.npz'
+b_path = 'data1/151507_humanBrain_metaData.csv'
 pc_num = 50
 dataset = load_data(spaFll_path=a_path, metaData_path=b_path, pca_dim=pc_num)
 
@@ -350,6 +354,7 @@ for epoch in range(1, n_epochs + 1):
 newmodel = torch.load('result/checkpoint.pt')
 newmodel.eval()
 for data in dataloader:
+    type(data)
     data = data.to(device)
     dis_matrix = distance_matrix(data).to(device)
     z = newmodel.encode(data)
